@@ -1,9 +1,9 @@
-# temper.py
+# temper.tcl
 
-The USB temperature and temperature/humidity sensors sold by PCsensor are
-widely available from the parent site
-(http://pcsensor.com/usb-temperature-humidity.html), from Amazon, and from
-EBay.
+This is a fork of the temper.py project with a translation to Tcl
+
+It still contains the temper.py to help me with merging upstream
+changes, but I removed the docker and other python-specific stuff.
 
 ## Design
 
@@ -12,34 +12,22 @@ sometimes including complicated monitoring and graphing software. Unlike,
 these projects, the goal of this project is to simply read data from the
 sensors and do nothing else, given the following constraints:
 * must work under Linux,
-* must work with Python 3,
-* third-party software will be avoided when possible,
-* all third-party software must be provided as standard Debian packages.
+* must work with plain Tcl (without requiring extra packages or extensions).
 
-### libusb is not used
+# Devices
 
-I tried to use libusb (apt-get install python3-usb; "import usb.core") and it
-provides a sophisticated interface to USB devices that was very nice.
-Unfortunately, I have one thermometer that didn't work with raw usb and that
-required access via the hidraw device; and I have another thermometer that has
-an undocumented HID protocol, but that is accessible via a serial tty.
-
-### hid and hidapi are not used
-
-I tried using hid (apt-get install python3-hid) and hidapi (apt-get install
-python3-hidapi) and these worked ok for two of the thermometers I have, but
-not for the one that requires access via a serial tty.
-
-### pySerial is used
-
-Although HID devices are accessed directly, pySerial is used for TTYs. This
-module is available as a Debian package:
-  sudo apt-get install python3-serial
+The USB temperature and temperature/humidity sensors sold by PCsensor are
+widely available from the parent site
+(http://pcsensor.com/usb-temperature-humidity.html), from Amazon, and from
+EBay.
 
 ## Supported Devices
 
-I own five kinds of devices from PCsensors. These are all supported by
-temper.py.
+I own only one device from PCsensors. It is supported by temper.tcl.
+The author of original temper.py stated that he owns 5 such devices.
+I expect that my script supports the same devices as original temper.py.
+
+The rest of this paragraph is from original temper.py page:
 
 In the following table "I" means the sensor is internal to the USB stick and
 "E" means the sensor is on a cable that is plugged into the USB stick.
@@ -239,82 +227,60 @@ problems, perhaps because no newline is sent after the command.
 ### Help
 
 ```
-$ ./temper.py --help
-usage: temper.py [-h] [-l] [--json] [--force VENDOR_ID:PRODUCT_ID]
-
-temper
-
-optional arguments:
--h, --help            show this help message and exit
--l, --list            List all USB devices
---json                Provide output as JSON
---force VENDOR_ID:PRODUCT_ID
-                      Force the use of the hex id; ignore other ids
+$ ./temper.tcl -h
+usage: ./temper.tcl [options ...]
+-l or --list          : List all USB devices
+-j or --json          : Provide output as JSON
+-f or --force Vid:Pid : Force the use of the hex id; ignore other ids
+-F or --firmware "TEMPer..." : Force given firmware instead of querying
+-v or --verbose       : Output binary data from thermometer
+-h or --help          : Output this help text
 ```
 
 ### List Devices
 
-In this example, one of the devices doesn't have the HID driver attached
-because I was using an libusb-based program to access it.
+It lists all usb-devices, but only the supported devices have that `*` mark.
 
 ```
-$ ./temper.py -l
-Bus 001 Dev 023 413d:2107 * ??? ['hidraw0', 'hidraw1']
-Bus 001 Dev 086 0c45:7401 * TEMPerV1.4 []
-Bus 002 Dev 002 04d8:f5fe   TrueRNG ['ttyACM0']
+$ ./temper.tcl -l
+...
+Bus 004 Dev 003 2109:0817   USB3.0 Hub              {}
+Bus 005 Dev 033 3553:a001 * TEMPerGold {hidraw8 hidraw9}
 ```
+
+The list of devices follows Tcl syntax rather than python syntax, which
+means, that if there were only *one* device (e.g. just "hidraw8"), then the
+curly-braces would disappear.
 
 ### Temperature
 
-In this example, one of the devices doesn't have the HID driver attached
-because I was using an libusb-based program to access it.
-
 ```
-$ ./temper.py
-Bus 001 Dev 023 413d:2107 TEMPerX_V3.1 26.55C 79.79F 43.41%
-Bus 001 Dev 086 0c45:7401 Error: no hid/tty devices available
+$ ./temper.tcl
+Bus 005 Dev 033 3553:a001 "TEMPerGold_V3.5" 26.18°C 79.12°F - - - -
 ```
 
+The tcl-version puts the firmware name in quotes, and adds a degree (°) symbol
+compared to temper.py .
+
 ```
-$ ./temper.py --json
+$ ./temper.tcl --json
 [
-    {
-        "path": "/sys/bus/usb/devices/1-1.2",
-        "busnum": 1,
-        "devnum": 23,
-        "vendorid": 16701,
-        "productid": 8455,
-        "vendor_name": "",
-        "product_name": "",
-        "devices": [
-            "hidraw0",
-            "hidraw1"
-        ],
-        "ident": "TEMPerX_V3.1",
-        "celsius": 26.55,
-        "fahrenheit": 79.78999999999999,
-        "humidity": 43.65
-    },
-    {
-        "path": "/sys/bus/usb/devices/1-1.1.1",
-        "busnum": 1,
-        "devnum": 86,
-        "vendorid": 3141,
-        "productid": 29697,
-        "vendor_name": "RDing",
-        "product_name": "TEMPerV1.4",
-        "devices": [
-        ],
-        "error": "no hid/tty devices available"
-    }
+   {
+      "idVendor": "3553",
+      "idProduct": "a001",
+      "manufacturer": "PCsensor",
+      "product": "TEMPerGold",
+      "busnum": "5",
+      "devnum": "33",
+      "devices": "hidraw8 hidraw9",
+      "firmware": "TEMPerGold_V3.5",
+      "internal temperature": "26.18"
+   }
 ]
 ```
 
+It differs from temper.py in that idVendor and idProduct are in hex format,
+and all values are strings.
+
 Similar JSON output can be generated with the --list option.
 
-### Docker
-The docker image is built with `temper.py` and `temper-service.py`.
-The default `ENTRYPOINT` points to `temper-service.py` which runs as web
-service listening on port 2610. The web service responds to two endpoints:
-`/list` and `/metrics`. The result is in JSON format. See [`DOCKER.md`](./DOCKER.md)
-for more details.
