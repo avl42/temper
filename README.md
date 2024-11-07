@@ -14,6 +14,16 @@ sensors and do nothing else, given the following constraints:
 * must work under Linux,
 * must work with plain Tcl (without requiring extra packages or extensions).
 
+# udev - let udev make devices read-/writable for us without "sudo"
+
+File "etc--udev--rules.d--24-TEMPer.rules" can be copied to
+ /etc/udev/rules.d/24-TEMPer.rules  (root required for that, ONCE)
+Then, plugging the device ought to make the device nodes accessible
+to all users in group "plugdev".
+
+Note: udev-rules sometimes fail for devices already plugged at boot time.
+If that happens, then unplug and replug the sensor.
+
 # Devices
 
 The USB temperature and temperature/humidity sensors sold by PCsensor are
