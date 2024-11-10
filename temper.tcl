@@ -67,7 +67,7 @@ namespace eval USBList {
             set devices [lsearch -glob -all -inline $all_devs "$path*"]
             set devtails [lmap d $devices { file tail $d }]
             set busdev "[dict get $devinfo busnum]_[dict get $devinfo devnum]"
-            dict set devinfo "devices" $devtails
+            dict set devinfo "devices" [lsort -dict $devtails]
             lappend result $path $busdev $devinfo
          }
       }
