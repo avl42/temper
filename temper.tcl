@@ -11,10 +11,8 @@
 namespace eval USBList {
    # root-dir of directory of usb devices
    variable SYSPATH    "/sys/bus/usb/devices"
-   # root-dir of directory of hidraw devices (not necessarily all usb)
-   variable SYS_HIDRAW "/sys/class/hidraw"
-   # root-dir of directory of tty devices (not necessarily all usb)
-   variable SYS_TTY    "/sys/class/tty"
+   # list of directories of devices (not necessarily all usb)
+   variable SYS_DEV_ROOTS {"/sys/class/hidraw" "/sys/class/tty"}
    # default structure with all keys and empty values
    variable BLANKDEV   {
       "idVendor" ""  "idProduct" ""  "manufacturer" ""  "product" ""
@@ -22,6 +20,17 @@ namespace eval USBList {
    }
    # list of attributes to read from /sys/... device path
    variable ATTRS    {idVendor idProduct manufacturer product busnum devnum}
+
+   # List of known VendorId:ProductId pairs.
+   # Anything else can be added as {comments} to give names to vid:pid pairs.
+   variable KNOWN_VID_PID {
+      "0c45:7401" "0c45:7402"
+      "413d:2107"
+      "1a86:5523" "1a86:e025"
+      "3553:a001" {PCsensor TEMPerGold}
+   }
+
+   variable forced_vendor_id ""  forced_product_id ""
 
    # read and return contents of file (minus final "\n")
    # if any error then return "" instead.
@@ -35,24 +44,27 @@ namespace eval USBList {
    # retrieve device information from /sys/... device path
    proc device_info {dirname} {
       variable BLANKDEV; variable ATTRS
+      set idVendor ""; set idProduct ""
 
       set device $BLANKDEV
       foreach attr $ATTRS {
          set val [readfile [file join $dirname $attr] ]
-         if {$attr in {"idVendor" "idProduct"} && $val eq ""} { return "" }
-         dict set device $attr $val
+         if {$attr in {"idVendor" "idProduct"}} {
+            if {$val eq ""} { return "" } else { set $attr $val }
+         }; dict set device $attr $val
       }
+      if {![is_known_id $idVendor $idProduct]} { return }
       return $device
    }
 
    proc get_usb_devices {} {
       # Scan a well-known Linux hierarchy in /sys and try to find
       # all of the relevant USB devices on a system.
-      variable SYS_HIDRAW; variable SYS_TTY; variable SYSPATH
+      variable SYS_DEV_ROOTS; variable SYSPATH
       set all_devs {}; set result {}
 
       # First get a list of devices for the relevant classes:
-      foreach dir [list $SYS_HIDRAW $SYS_TTY] {
+      foreach dir $SYS_DEV_ROOTS {
          foreach dev [glob -nocomplain -directory $dir -types {l} "*"] {
             set tgt [file readlink $dev]; # read symlink
             lappend all_devs [file normalize [file join $dir $tgt]]
@@ -73,10 +85,28 @@ namespace eval USBList {
       }
       return [lsort -index 1 -stride 3 $result]
    }
+
+   proc is_known_id {idVendor idProduct} {
+      variable forced_vendor_id; variable forced_product_id; variable KNOWN_VID_PID
+
+      # Returns True if the idVendor and idProduct are valid.
+      if {$forced_vendor_id ne "" && $forced_product_id ne ""} {
+         return [expr {$forced_vendor_id eq $idVendor && $forced_product_id eq $idProduct}]
+      } else {
+         set vidpid "$idVendor:$idProduct"
+         return [expr {$vidpid in $KNOWN_VID_PID}]
+      }
+   }
+
+   proc set_forced_vid_pid {vendor_id product_id} {
+      variable forced_vendor_id  $vendor_id
+      variable forced_product_id $product_id
+   }
+
 }
 
 # Read temperature and/or humidity information from a specified USB device.
-namespace eval USBRead {
+namespace eval Temper {
 
    # This structure describes each recognized firmware, and how to extract the data.
    #
@@ -309,33 +339,7 @@ namespace eval USBRead {
    }
 }
 
-namespace eval Temper {
-   # List of known VendorId:ProductId pairs.
-   # Line-breaks don't matter technically, but keep all products of a
-   #   particular vendor in a line - for human readers.
-   variable KNOWN_VID_PID {
-      "0c45:7401" "0c45:7402"
-      "413d:2107"
-      "1a86:5523" "1a86:e025"
-      "3553:a001"
-   }
-
-   proc init {} {
-      variable usb_devices [USBList::get_usb_devices]
-      variable forced_vendor_id ""  forced_product_id ""
-   }
-
-   proc is_known_id {idVendor idProduct} {
-      variable forced_vendor_id; variable forced_product_id; variable KNOWN_VID_PID
-
-      # Returns True if the idVendor and idProduct are valid.
-      if {$forced_vendor_id ne "" && $forced_product_id ne ""} {
-         return [expr {$forced_vendor_id eq $idVendor && $forced_product_id eq $idProduct}]
-      } else {
-         set vidpid "$idVendor:$idProduct"
-         return [expr {$vidpid in $KNOWN_VID_PID}]
-      }
-   }
+namespace eval Main {
 
    proc print_json {devices} {
       set json "\["; set c ""
@@ -351,35 +355,34 @@ namespace eval Temper {
    }
 
    proc listdevs {use_json} {
-      variable usb_devices
+      set usb_devices [USBList::get_usb_devices]
 
       if {$use_json} {
          print_json [lmap {_ _ dev} $usb_devices { set dev }]
       } else {
          foreach {path busdev info} $usb_devices {
             dict with info {
-               set check [expr {[is_known_id $idVendor $idProduct] ? "*" : " "}]
                puts [format "Bus %03d Dev %03d %s:%s %s %s %s" \
-                  $busnum $devnum $idVendor $idProduct $check $product [list $devices] ]
+                  $busnum $devnum $idVendor $idProduct "*" $product [list $devices] ]
             }
          }
       }
    }
 
    proc readdevs {verbose} {
-      variable usb_devices
       # Read all of the known devices on the system and return a list of
       # dictionaries which contain the device information, firmware information,
       # and environmental information obtained. If there is an error, then the
       # 'error' field in the dictionary will contain a string explaining the
       # error.
 
+      set usb_devices [USBList::get_usb_devices]
+
       set results {}
       foreach {path busdev info} $usb_devices {
          dict with info {
-            if {![is_known_id $idVendor $idProduct]} { continue }
             if {[llength $devices] == 0} { continue }
-            set devinfo [USBRead::readdev [lindex $devices end] $verbose]
+            set devinfo [Temper::readdev [lindex $devices end] $verbose]
             lappend results [dict merge $info $devinfo]
          }
       }
@@ -446,12 +449,11 @@ namespace eval Temper {
             "-f" - "--force"    {
                incr idx; set arg [lindex $argv $idx]
                lassign [split $arg ":"] vendor_id product_id
-               variable forced_vendor_id  $vendor_id
-               variable forced_product_id $product_id
+               USBList::set_forced_vid_pid $vendor_id $product_id
             }
             "-F" - "--firmware" {
                incr idx; set arg [lindex $argv $idx]
-               USBRead::set_forced_firmware $arg
+               Temper::set_forced_firmware $arg
             }
             "-h" - "--help"     {
                puts "usage: $::argv0 \[options ...\]"
@@ -476,7 +478,12 @@ namespace eval Temper {
    }
 }
 
-Temper::init
-set rc [Temper::main $argv]
-exit $rc
+try {
+   Main::main $argv
+} on ok {msg opts} {
+   set rc $msg
+} on error {msg opts} {
+   puts stderr [dict get $opts -errorinfo]
+   set rc 1
+}; exit $rc
 
